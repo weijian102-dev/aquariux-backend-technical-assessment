@@ -8,7 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
-
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -16,93 +16,180 @@ import java.util.Map;
 @Component
 @Slf4j
 @RequiredArgsConstructor
+@ConditionalOnProperty(
+        name = "app.price-scheduler.enabled",
+        havingValue = "true",
+        matchIfMissing = true
+)
 public class PriceUpdateScheduler {
 
     private final RestTemplate restTemplate;
     private final CryptoPairMapper cryptoPairMapper;
     private final CryptoPriceMapper cryptoPriceMapper;
 
-    private static final String BINANCE_URL = "https://api.binance.com/api/v3/ticker/bookTicker";
-    private static final String HUOBI_URL = "https://api.huobi.pro/market/tickers";
+    private static final String BINANCE_URL =
+            "https://api.binance.com/api/v3/ticker/bookTicker";
+
+    private static final String HUOBI_URL =
+            "https://api.huobi.pro/market/tickers";
 
     @Scheduled(fixedRate = 10000) // 10 seconds
     public void updatePrices() {
+
         log.info("Starting price update from exchanges");
-        
+
         try {
             // Fetch Binance prices
-            List<Map<String, Object>> binancePrices = fetchBinancePrices();
-            
+            List<Map<String, Object>> binancePrices =
+                    fetchBinancePrices();
+
             // Fetch Huobi prices
-            Map<String, Object> huobiResponse = fetchHuobiPrices();
-            
+            Map<String, Object> huobiResponse =
+                    fetchHuobiPrices();
+
             // Process and store best prices
             processPrices(binancePrices, huobiResponse);
-            
+
         } catch (Exception e) {
-            log.error("Error updating prices: {}", e.getMessage());
+            log.error(
+                    "Error updating prices: {}",
+                    e.getMessage(),
+                    e
+            );
         }
     }
 
     private List<Map<String, Object>> fetchBinancePrices() {
+
         try {
-            return restTemplate.getForObject(BINANCE_URL, List.class);
+            List<Map<String, Object>> response =
+                    restTemplate.getForObject(
+                            BINANCE_URL,
+                            List.class
+                    );
+
+            return response != null
+                    ? response
+                    : List.of();
+
         } catch (Exception e) {
-            log.error("Error fetching Binance prices: {}", e.getMessage());
+            log.error(
+                    "Error fetching Binance prices: {}",
+                    e.getMessage()
+            );
+
             return List.of();
         }
     }
 
     private Map<String, Object> fetchHuobiPrices() {
+
         try {
-            return restTemplate.getForObject(HUOBI_URL, Map.class);
+            Map<String, Object> response =
+                    restTemplate.getForObject(
+                            HUOBI_URL,
+                            Map.class
+                    );
+
+            return response != null
+                    ? response
+                    : Map.of();
+
         } catch (Exception e) {
-            log.error("Error fetching Huobi prices: {}", e.getMessage());
+            log.error(
+                    "Error fetching Huobi prices: {}",
+                    e.getMessage()
+            );
+
             return Map.of();
         }
     }
 
-    private void processPrices(List<Map<String, Object>> binancePrices, Map<String, Object> huobiResponse) {
-        // Process supported pairs: BTCUSDT, ETHUSDT
-        String[] supportedPairs = {"BTCUSDT", "ETHUSDT"};
-        
+    private void processPrices(
+            List<Map<String, Object>> binancePrices,
+            Map<String, Object> huobiResponse) {
+
+        String[] supportedPairs = {
+                "BTCUSDT",
+                "ETHUSDT"
+        };
+
         for (String pair : supportedPairs) {
+
             BigDecimal bestBidPrice = BigDecimal.ZERO;
-            BigDecimal bestAskPrice = BigDecimal.valueOf(Double.MAX_VALUE);
+
+            BigDecimal bestAskPrice =
+                    BigDecimal.valueOf(Double.MAX_VALUE);
+
             String bestBidSource = "";
             String bestAskSource = "";
-            
-            // Find best prices from Binance
+
+            // ============================================
+            // Binance
+            // ============================================
+
             for (Map<String, Object> ticker : binancePrices) {
+
                 if (pair.equals(ticker.get("symbol"))) {
-                    BigDecimal bidPrice = new BigDecimal(ticker.get("bidPrice").toString());
-                    BigDecimal askPrice = new BigDecimal(ticker.get("askPrice").toString());
-                    
+
+                    BigDecimal bidPrice =
+                            new BigDecimal(
+                                    ticker.get("bidPrice").toString()
+                            );
+
+                    BigDecimal askPrice =
+                            new BigDecimal(
+                                    ticker.get("askPrice").toString()
+                            );
+
+                    // Highest bid is best for SELL
                     if (bidPrice.compareTo(bestBidPrice) > 0) {
                         bestBidPrice = bidPrice;
                         bestBidSource = "BINANCE";
                     }
+
+                    // Lowest ask is best for BUY
                     if (askPrice.compareTo(bestAskPrice) < 0) {
                         bestAskPrice = askPrice;
                         bestAskSource = "BINANCE";
                     }
                 }
             }
-            
-            // Find best prices from Huobi
+
+            // ============================================
+            // Huobi
+            // ============================================
+
             if (huobiResponse.containsKey("data")) {
-                List<Map<String, Object>> huobiTickers = (List<Map<String, Object>>) huobiResponse.get("data");
-                String huobiSymbol = pair.toLowerCase();
-                
+
+                List<Map<String, Object>> huobiTickers =
+                        (List<Map<String, Object>>)
+                                huobiResponse.get("data");
+
+                String huobiSymbol =
+                        pair.toLowerCase();
+
                 for (Map<String, Object> ticker : huobiTickers) {
+
                     if (huobiSymbol.equals(ticker.get("symbol"))) {
-                        BigDecimal bidPrice = new BigDecimal(ticker.get("bid").toString());
-                        BigDecimal askPrice = new BigDecimal(ticker.get("ask").toString());
-                        
+
+                        BigDecimal bidPrice =
+                                new BigDecimal(
+                                        ticker.get("bid").toString()
+                                );
+
+                        BigDecimal askPrice =
+                                new BigDecimal(
+                                        ticker.get("ask").toString()
+                                );
+
+                        // Highest bid is best for SELL
                         if (bidPrice.compareTo(bestBidPrice) > 0) {
                             bestBidPrice = bidPrice;
                             bestBidSource = "HUOBI";
                         }
+
+                        // Lowest ask is best for BUY
                         if (askPrice.compareTo(bestAskPrice) < 0) {
                             bestAskPrice = askPrice;
                             bestAskSource = "HUOBI";
@@ -110,35 +197,81 @@ public class PriceUpdateScheduler {
                     }
                 }
             }
-            
-            // Store best price with source info
-            if (bestAskPrice.compareTo(BigDecimal.valueOf(Double.MAX_VALUE)) < 0) {
-                storePriceHistory(pair, bestBidPrice, bestAskPrice, bestBidSource, bestAskSource);
-                log.info("Stored {} best price - Bid: {} ({}), Ask: {} ({})", 
-                    pair, bestBidPrice, bestBidSource, bestAskPrice, bestAskSource);
+
+            // ============================================
+            // Store aggregated price
+            // ============================================
+
+            if (bestBidPrice.compareTo(BigDecimal.ZERO) > 0
+                    && bestAskPrice.compareTo(
+                    BigDecimal.valueOf(Double.MAX_VALUE)
+            ) < 0) {
+
+                storePriceHistory(
+                        pair,
+                        bestBidPrice,
+                        bestAskPrice,
+                        bestBidSource,
+                        bestAskSource
+                );
+
+                log.info(
+                        "Stored {} best price - Bid: {} ({}), Ask: {} ({})",
+                        pair,
+                        bestBidPrice,
+                        bestBidSource,
+                        bestAskPrice,
+                        bestAskSource
+                );
+            } else {
+
+                log.warn(
+                        "No valid price found for {}",
+                        pair
+                );
             }
         }
     }
-    
-    private void storePriceHistory(String pairName, BigDecimal bidPrice, BigDecimal askPrice, String bidSource, String askSource) {
-        Long cryptoPairId = getCryptoPairId(pairName);
-        
+
+    private void storePriceHistory(
+            String pairName,
+            BigDecimal bidPrice,
+            BigDecimal askPrice,
+            String bidSource,
+            String askSource) {
+
+        Long cryptoPairId =
+                getCryptoPairId(pairName);
+
         if (cryptoPairId != null) {
-            CryptoPrice cryptoPrice = new CryptoPrice();
+
+            CryptoPrice cryptoPrice =
+                    new CryptoPrice();
+
             cryptoPrice.setCryptoPairId(cryptoPairId);
-            cryptoPrice.setBidPrice(askPrice);
-            cryptoPrice.setAskPrice(bidPrice);
-            cryptoPrice.setBidSource(askSource);
-            cryptoPrice.setAskSource(bidSource);
-            
+
+            // Correct mapping:
+            cryptoPrice.setBidPrice(bidPrice);
+            cryptoPrice.setAskPrice(askPrice);
+
+            cryptoPrice.setBidSource(bidSource);
+            cryptoPrice.setAskSource(askSource);
+
             cryptoPriceMapper.insertPrice(cryptoPrice);
+
         } else {
-            log.warn("Crypto pair not found: {}", pairName);
+
+            log.warn(
+                    "Crypto pair not found: {}",
+                    pairName
+            );
         }
     }
-    
+
     private Long getCryptoPairId(String pairName) {
-        String swappedPair = "BTCUSDT".equals(pairName) ? "ETHUSDT" : "BTCUSDT";
-        return cryptoPairMapper.findIdByPairName(swappedPair);
+
+        // Store BTC price against BTCUSDT
+        // and ETH price against ETHUSDT.
+        return cryptoPairMapper.findIdByPairName(pairName);
     }
 }
